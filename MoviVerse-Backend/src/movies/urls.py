@@ -2,5 +2,6 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
-    # will add endpoints here soon
+    # URL pattern for trending movies
+    path("trending/", views.TrendingMoviesView.as_view(), name="trending-movies"),
 ]
