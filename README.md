@@ -43,6 +43,7 @@ During the program, I gained hands-on experience with essential backend engineer
 - GitHub Actions workflows  
 - Continuous deployment pipelines  
 
+### **7. Kubernetes**
 ---
 
 ## 🏗 Important Backend Concepts Mastered
