@@ -14,26 +14,21 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 import dj_database_url
+from datetime import timedelta
 
 # Load environment variables
-# Load .env from same folder as manage.py
-BASE_DIR = Path(__file__).resolve().parent.parent
-load_dotenv(BASE_DIR.parent / ".env")
+load_dotenv()
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.getenv('SECRET_KEY', 'fallback-secret-key')
+SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'fallback-secret-key')
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'True') == 'True'
 
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '*').split(',')
-
-TMDB_API_KEY = os.getenv("TMDB_API_KEY")
-
-CORS_ALLOW_ALL_ORIGINS = True
 
 # Application definition
 
@@ -44,10 +39,14 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'rest_framework',
-    'corsheaders',
-    'drf_yasg',
-    'movies',
+  
+     # Third party
+    "rest_framework",
+    "corsheaders",
+    "drf_yasg",
+
+    # Local apps
+    "movies",
 ]
 
 MIDDLEWARE = [
@@ -84,9 +83,11 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database with postgres configuration
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
+DATABASE_URL = os.getenv("DB_CONNECTION") or ""
+
 DATABASES = {
     "default": dj_database_url.parse(
-        os.getenv("DB_CONNECTION"),
+        DATABASE_URL,
         conn_max_age=600,
         ssl_require=True
     )
@@ -99,6 +100,29 @@ CACHES = {
         "LOCATION": os.getenv("REDIS_URL"),
     }
 }
+
+# REST Framework + JWT
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": (
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
+    ),
+    "DEFAULT_PERMISSION_CLASSES": (
+        "rest_framework.permissions.AllowAny",
+    ),
+    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.CursorPagination",
+    "PAGE_SIZE": 20,
+}
+
+from rest_framework_simplejwt.settings import api_settings as jwt_settings
+
+SIMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=60),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=30),
+    "SIGNING_KEY": os.getenv("SIMPLE_JWT_SECRET", SECRET_KEY),
+}
+
+# CORS settings
+CORS_ALLOW_ALL_ORIGINS = True
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
@@ -140,3 +164,11 @@ STATIC_URL = '/static/'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# TMDB Configuration
+TMDB_API_KEY = os.getenv("TMDB_API_KEY")
+
+# Celery config (app-level)
+CELERY_BROKER_URL = os.getenv("REDIS_URL")
+CELERY_RESULT_BACKEND = os.getenv("REDIS_URL")
+CELERY_BEAT_SCHEDULE = {}  # will be configured in core.celery or movies.tasks
