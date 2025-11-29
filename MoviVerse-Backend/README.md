@@ -1,341 +1,293 @@
-# MoviVerse — Backend Documentation
+# MovieBox — Django Backend (TMDb Integrated)
 
-## 1. Project Summary (one-liner)
-**MoviVerse backend**: A production-ready Django REST backend providing movie discovery, trending, personalized recommendations, user auth & preferences, TMDb integration, Redis caching, background processing, and Swagger documentation.
-
----
-
-## 2. Tech Stack (backend-only)
-- Python 3.10+
-- Django 4.2+ (or latest LTS)
-- Django REST Framework (DRF)
-- PostgreSQL (primary relational DB)
-- Redis (caching + Celery broker option)
-- Celery + Celery Beat (background jobs)
-- drf-spectacular or drf-yasg (Swagger/OpenAPI)
-- requests / httpx (external HTTP to TMDb)
-- djangorestframework-simplejwt (JWT auth)
-- pytest + pytest-django (testing)
-- black, isort, flake8 (format & lint)
-- GitHub Actions (CI/CD)
-- Hosting: Render / Railway / Heroku (no Docker local requirement)
+A production-ready Django REST backend for a movie app integrated with The Movie Database (TMDb). This repository provides modular apps for `users`, `movies`, `reviews`, and `favorites`, a TMDb service layer, JWT authentication, caching (Redis), Celery background tasks, and CI configuration. The project is designed to be consumed by a frontend (React + Vite).
 
 ---
 
-## 3. Goals & Non-Functional Requirements
-- Correctness: endpoints must return well-formed JSON and proper HTTP status codes.
-- Performance: trending & recommendations must use Redis caching; target <300ms median for cached endpoints.
-- Security: JWT auth, CORS, input validation, HTTPS in production.
-- Observability: logging, health check, and basic metrics.
-- Maintainability: modular apps, clear documentation, and tests (unit + integration).
-- Deployability without Docker: use hosting that accepts Python deployments (Render/Railway/Heroku).
+## Table of contents
+
+1. [Features](#features)
+2. [Quick start (local development)](#quick-start-local-development)
+3. [Environment variables](#environment-variables)
+4. [Project layout](#project-layout)
+5. [Run the app (commands)](#run-the-app-commands)
+6. [TMDb integration & syncing](#tmdb-integration--syncing)
+7. [Background tasks (Celery)](#background-tasks-celery)
+8. [Caching strategy](#caching-strategy)
+9. [API overview (important endpoints)](#api-overview-important-endpoints)
+10. [Testing & CI](#testing--ci)
+11. [Deployment (production)](#deployment-production)
+12. [Security & best practices](#security--best-practices)
+13. [Troubleshooting](#troubleshooting)
+14. [Next steps & roadmap](#next-steps--roadmap)
+15. [License](#license)
 
 ---
 
-## 4. Environment Variables (minimum)
-- SECRET_KEY
-- DEBUG (True/False)
-- ALLOWED_HOSTS
-- DATABASE_NAME / DATABASE_USER / DATABASE_PASSWORD / DATABASE_HOST / DATABASE_PORT (or DATABASE_URL)
-- REDIS_URL (e.g., redis://:password@host:port/0)
-- TMDB_API_KEY
-- EMAIL_BACKEND config (for password reset)
-- SENTRY_DSN (optional)
-- SIMPLE_JWT settings (token lifetimes) as env vars
+## Features
+
+- Modular Django apps: `users`, `movies`, `reviews`, `favorites`, `tmdb` service layer.
+- JWT authentication with `djangorestframework-simplejwt`.
+- TMDb client with retries and resilient requests.
+- Trending and search endpoints (TMDb-backed) and a local trending-sync command.
+- Hybrid recommendations (genre-based + TMDb fallback).
+- Redis caching for expensive TMDb endpoints.
+- Celery tasks for scheduled syncs (requires Redis broker).
+- DRF pagination, Swagger docs via `drf-yasg`.
+- GitHub Actions CI template for tests.
 
 ---
 
-## 5. Data Models (concise surface-level schema)
-All PKs are UUIDs unless noted.
+## Quick start (local development)
 
-### User (custom `AbstractUser`)
-- id, email (unique), username, password (hashed), is_staff, is_active, date_joined
-- profile fields: avatar_url, locale, bio (separate Profile model optional)
+1. Clone the repository:
 
-### Genre
-- id, name, slug
+```bash
+git clone <your-repo-url>
+cd moviebox
+```
 
-### Person (actor/director)
-- id, name, tmdb_id (optional), bio, dob, photo_url
+2. Create virtual environment & install dependencies:
 
-### Movie
-- id, tmdb_id (int), title, overview, release_date, runtime, poster_url, backdrop_url, vote_average, language
-- relations: genres (M2M), cast (M2M through MovieCast), crew (M2M through MovieCrew)
-- metadata fields: popularity_score (cached/denormalized)
+```bash
+python -m venv venv
+source venv/bin/activate   # macOS / Linux
+venv\Scripts\activate     # Windows
+pip install -r requirements.txt
+```
 
-### MovieCast / MovieCrew
-- movie (FK), person (FK), role, character_name
+3. Copy and fill the `.env` file (see [Environment variables](#environment-variables)):
 
-### FavoriteMovie
-- id, user (FK), movie_tmdb_id (int), title, poster_url, added_at
+```bash
+cp .env.example .env
+# Edit .env and set values (POSTGRES, TMDB_API_KEY, SECRET_KEY, etc.)
+```
 
-### Review / Rating
-- id, user (FK), movie_tmdb_id, rating (1-5), text, created_at, updated_at
+4. Run migrations and create a superuser:
 
-### WatchHistory
-- id, user (FK), movie_tmdb_id, watched_at, progress_seconds (optional)
+```bash
+python manage.py migrate
+python manage.py createsuperuser
+```
 
-### TrendingCache / RecommendationCache (optional models)
-- key, payload (JSON), ttl, last_updated
+5. Run the development server:
 
----
+```bash
+python manage.py runserver
+```
 
-## 6. Key Endpoints (full list, method, path, purpose)
+6. (Optional) Sync trending movies once:
 
-### Auth & Users
-- `POST /api/auth/register/` — register user. Body: {email, username, password}
-- `POST /api/auth/login/` — obtain JWT. Body: {email, password} → returns access & refresh tokens
-- `POST /api/auth/token/refresh/` — refresh access token
-- `POST /api/auth/logout/` — optional: blacklist refresh token
-- `GET /api/auth/me/` — get current user profile (Auth required)
-- `POST /api/auth/password-reset/` — request reset (email)
-- `POST /api/auth/password-reset/confirm/` — confirm reset
-
-### Movies (TMDb backed)
-- `GET /api/movies/trending/?time_range=day|week&limit=20` — trending movies (cached)
-- `GET /api/movies/popular/?page=1` — popular movies (TMDb)
-- `GET /api/movies/top-rated/?page=1` — top rated
-- `GET /api/movies/upcoming/` — upcoming releases
-- `GET /api/movies/{tmdb_id}/` — movie detail (aggregates TMDb endpoints: details, credits, videos)
-- `GET /api/movies/{tmdb_id}/similar/` — movies similar to this (TMDb similar + local)
-- `GET /api/movies/search/?q=&genre=&year=&page=` — search & filter (supports PostgreSQL FTS if enabled)
-
-### Preferences & Interactions
-- `POST /api/user/favorites/` — add to favorites. Body: {tmdb_id, title, poster_url}
-- `GET /api/user/favorites/` — list user's favorites (Auth required)
-- `DELETE /api/user/favorites/{id}/` — remove favorite
-- `POST /api/user/watchlist/` — add to watchlist
-- `GET /api/user/watchlist/` — list watchlist
-- `POST /api/movies/{tmdb_id}/track-view/` — record view event (user or anonymous)
-- `GET /api/user/history/` — view watch history (Auth required)
-
-### Reviews & Ratings
-- `POST /api/movies/{tmdb_id}/reviews/` — create review (Auth required)
-- `GET /api/movies/{tmdb_id}/reviews/` — list reviews
-- `PUT /api/reviews/{id}/` — update review (owner only)
-- `DELETE /api/reviews/{id}/` — delete review (owner or admin)
-
-### Recommendations & Trending (personalized)
-- `GET /api/movies/recommendations/` — personalized recommendations (Auth required)
-  - Query params: `limit`, `strategy=hybrid|content|collab`
-- `GET /api/movies/{tmdb_id}/recommendations/` — item-based recommendations
-
-### Admin (protected, admin-only)
-- CRUD endpoints for Movie metadata (if persisting)
-- Endpoints to trigger cache refresh, re-sync TMDb data, and view analytics
-- `GET /api/admin/analytics/` — basic metrics JSON
-
-### Docs & Health
-- `GET /api/docs/` — Swagger UI (drf-spectacular or drf-yasg)
-- `GET /health/` — liveness & readiness checks
+```bash
+python manage.py sync_tmdb_trending
+```
 
 ---
 
-## 7. TMDb Integration (detailed)
+## Environment variables
 
-### 7.1 API Key
-- Store TMDb API key in `TMDB_API_KEY` env var. Never expose to frontend.
+Use the `.env` file (do NOT commit secrets). The `.env.example` file lists all variables; key ones below:
 
-### 7.2 Required TMDb endpoints used
-- `/trending/movie/day` and `/trending/movie/week`
-- `/movie/popular`, `/movie/top_rated`, `/movie/upcoming`
-- `/movie/{id}`, `/movie/{id}/credits`, `/movie/{id}/videos`, `/movie/{id}/similar`
-- `/search/multi` for search autocomplete
-- `/configuration` for image base URLs
+- `DJANGO_SECRET_KEY` — Django secret key.
+- `DJANGO_DEBUG` — `True` for local dev, `False` for production.
+- `DJANGO_ALLOWED_HOSTS` — comma-separated hosts.
+- `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_HOST` / `POSTGRES_PORT`
+- `REDIS_URL` — e.g. `redis://localhost:6379/0` (used for cache & Celery broker/result backend).
+- `TMDB_API_KEY` — Your TMDb API key. (Get one at https://www.themoviedb.org/)
+- `SIMPLE_JWT_ACCESS_TOKEN_LIFETIME_MINUTES` — JWT lifetime.
 
-### 7.3 Orchestration Layer
-- Implement `services/tmdb.py` that wraps HTTP calls and normalizes TMDb responses to the internal schema.
-- Validate responses and return consistent JSON structure for frontend consumption.
-
-### 7.4 Caching policy for TMDb calls
-- Trending/popular/top-rated: cache in Redis with TTL = 10 minutes (configurable)
-- Movie detail pages: cache for 12–24 hours; invalidate on admin update
-- Search results: short TTL (e.g., 60 seconds) + rate limiting
-- Use cache keys like `tmdb:trending:week`, `tmdb:movie:{id}:detail`
-
-### 7.5 Rate-limiting & Retry
-- Implement request retries with exponential backoff for transient errors
-- Circuit breaker: if TMDb fails repeatedly, fall back to cached DB content or return graceful error
-- Log TMDb call failures and alerts
+Make sure **`.env`** is listed in `.gitignore`.
 
 ---
 
-## 8. Caching & Performance
+## Project layout (important files)
 
-### Redis usage
-- Caches for trending, popular, movie details, search suggestions
-- Optional: use Redis as Celery broker & result backend
-- Use Django `cache` framework with RedisCache backend
-- Use `select_related` and `prefetch_related` in heavy queries
-- Add DB indexes on frequently filtered fields: `tmdb_id`, `release_date`, `vote_average`, `title` (GIN index for FTS)
-
-### Pagination & Rate Limiting
-- Use page-based pagination for list endpoints (DRF `PageNumberPagination`)
-- Implement global rate-limiting (per-IP & per-user) for endpoints hitting TMDb to protect API key
-
----
-
-## 9. Recommendation Engine (design & endpoints)
-
-### Strategy: Hybrid (Content-based + Collaborative)
-- **Content-based**: compute item vectors from genres, tags, cast, director, keywords. Use cosine similarity (offline precomputation).
-- **Collaborative**: use user-item interaction matrix (ratings, favorites, watch history). Implement simple nearest-neighbors or matrix factorization offline using periodic jobs.
-- **Hybrid**: combine scores with weights (e.g., 0.6 content + 0.4 collaborative).
-
-### Implementation notes
-- Precompute recommendations for active users periodically (Celery scheduled job) and cache results in Redis or store in `RecommendationCache` model.
-- Expose `/api/movies/recommendations/` to return cached personalized lists; fallback to content-based if collaborative data is sparse.
+```
+moviebox/
+├── moviebox/          # Django project settings + celery
+├── users/             # auth, profiles, recommendations
+├── movies/            # movie model, trending, sync command
+├── reviews/           # user reviews
+├── favorites/         # user favorites
+├── tmdb/              # TMDb client/service
+├── requirements.txt
+├── .env.example
+└── .github/workflows/ci.yml
+```
 
 ---
 
-## 10. Trending Engine (detailed)
+## Run the app (commands)
 
-### Inputs
-- View counts (track via `/track-view/`)
-- Unique viewers count
-- Ratings (recent rating averages)
-- Recency (recentness boost)
+- Run server:
+  ```bash
+  python manage.py runserver
+  ```
 
-### Process
-- Aggregation job (daily via Celery Beat) that computes trending scores and persists top-N in `TrendingCache` and Redis.
-- Endpoint `/api/movies/trending/` reads from Redis for low-latency responses.
+- Run migrations:
+  ```bash
+  python manage.py migrate
+  ```
 
----
+- Create superuser:
+  ```bash
+  python manage.py createsuperuser
+  ```
 
-## 11. Background Jobs (Celery tasks)
+- Sync TMDb trending (one-off or via Celery beat):
+  ```bash
+  python manage.py sync_tmdb_trending
+  ```
 
-### Required tasks
-- `tasks.generate_daily_trending()` — compute trending using recent metrics
-- `tasks.generate_recommendations()` — compute per-user recommendations periodically
-- `tasks.sync_tmdb_movie(id)` — fetch & update movie details from TMDb
-- `tasks.send_email()` — for notifications and password reset
-- `tasks.cleanup_media()` — delete orphan files
+- Start Celery worker (requires Redis running):
+  ```bash
+  celery -A moviebox worker --loglevel=info
+  ```
 
-### Infrastructure
-- Use Redis or RabbitMQ as broker (Redis recommended for simplicity)
-- Celery Beat for schedule
-
----
-
-## 12. Admin & Analytics
-
-### Admin features (API + Django Admin)
-- CRUD for movies/genres/tags
-- Trigger manual TMDb sync for specific movies
-- View logs & failed tasks
-- Export analytics metrics (CSV/JSON)
-
-### Analytics endpoints (examples)
-- `/api/admin/analytics/most-watched/`
-- `/api/admin/analytics/new-users/`
-- `/api/admin/analytics/dau/`
+- Run tests:
+  ```bash
+  python manage.py test
+  ```
 
 ---
 
-## 13. Testing Strategy
+## TMDb integration & syncing
 
-### Unit tests
-- Models, serializers, utility functions, permission classes
+- Store your `TMDB_API_KEY` in `.env`.
+- The `tmdb.client.TMDbClient` centralizes TMDb requests and applies retry logic.
+- For periodic syncing of trending movies into the local DB, use the management command:
 
-### Integration tests
-- API endpoints using DRF APIClient
-- Mock TMDb responses using `responses` or `requests-mock`
+```bash
+python manage.py sync_tmdb_trending
+```
 
-### End-to-end tests (optional)
-- Use a staging DB & controlled TMDb key or mocked TMDb proxy
-
-### Coverage
-- Aim for 70%+ coverage for backend codebase; critical paths near 90%
+- Consider scheduling `sync_tmdb_trending` nightly via Celery Beat or a cron job.
 
 ---
 
-## 14. Security Best Practices
+## Background tasks (Celery)
 
-- Use HTTPS in production
-- Keep DEBUG=False in production
-- Strong SECRET_KEY via env var
-- CORS restricted to frontend origins
-- Rate limit endpoints (esp. search & TMDb proxied endpoints)
-- Input validation in serializers
-- Avoid exposing TMDb API key; server-side calls only
+- `CELERY_BROKER_URL` and `CELERY_RESULT_BACKEND` point to the same Redis instance by default (set `REDIS_URL`).
 
----
+- Example to start worker:
 
-## 15. CI/CD (GitHub Actions) — Required workflow
+```bash
+celery -A moviebox worker --loglevel=info
+```
 
-### On PR
-- Run linters (black, isort, flake8)
-- Run tests (unit + integration)
-- Static analysis (optional mypy)
-- Security checks (bandit optional)
-
-### On merge to main
-- Run migrations on deploy target
-- Run migration tests
-- Deploy to host (Render/Railway/Heroku) using GitHub Secrets for env vars
-- Run health check endpoint
-
-**Note:** Since Docker is not allowed locally, rely on host platform's Python buildpacks / deploy method.
+- If you add periodic tasks, set up Celery Beat or an external scheduler. Example (production recommended): run a Beat process or use a scheduler service.
 
 ---
 
-## 16. Monitoring & Observability
+## Caching strategy
 
-- Structured logs (JSON recommended)
-- Health endpoints (`/health/`)
-- Error tracking (Sentry integration optional)
-- Metrics: request durations, error rates, cache hit ratio
-
----
-
-## 17. Deliverables (what you must hand in)
-
-- GitHub repo with clear commit history and meaningful commits
-- `README.md` with setup instructions, env vars, and run commands
-- Swagger UI accessible at `/api/docs/` (or generate `openapi.json`/yaml)
-- Managed Postgres & Redis connection instructions (or dev instructions)
-- CI workflow file `.github/workflows/ci.yml`
-- Tests & coverage report
-- Short demo script (curl examples) showing auth, trending, recommendations, add favorite
-- Deployed URL(s) with Swagger docs (if possible)
+- Redis is used to cache TMDb responses (trending, genres, etc.) for short durations to reduce API calls and improve response speed.
+- Cache keys used by default (examples): `tmdb_trending`, `tmdb_genres`.
+- Tune TTLs depending on how fresh you want data to be (e.g., trending -> 10 minutes, genres -> 24 hours).
 
 ---
 
-## 18. Milestones (suggested)
+## API overview (important endpoints)
 
-**MVP (week 1–2)**
-- Auth (JWT), basic user model
-- TMDb wrapper service, trending endpoint (cached)
-- Favorites model & endpoints
-- Swagger basic docs
+> Base path: `/api/`
 
-**Phase 2 (week 3)**
-- Movie detail pages (TMDb aggregation)
-- Watchlist, reviews & ratings
-- Recommendations basic (content-based)
+### Users
+- `POST /api/users/register/` — register
+- `POST /api/users/login/` — obtain JWT tokens (`access`, `refresh`)
+- `POST /api/users/token/refresh/` — refresh token
+- `GET|PUT /api/users/me/` — get or update profile
+- `GET /api/users/recommendations/` — hybrid recommendations (genre-based, fallback to TMDb trending)
 
-**Phase 3 (week 4)**
-- Collaborative recommendations, background jobs, Celery + Redis
-- Admin endpoints & analytics
-- CI/CD & deployment
+### Movies
+- `GET /api/movies/trending/` — TMDb trending (cached)
+- `GET /api/movies/trending_cached/` — local DB trending (synced)
+- `GET /api/movies/search/?q=...` — search TMDb
+- `GET /api/movies/genres/` — list TMDb genres (cached)
+- `GET /api/movies/<tmdb_id>/` — local movie detail (if synced)
 
----
+### Reviews
+- `GET /api/reviews/movie/<movie_tmdb_id>/` — list reviews for a movie
+- `POST /api/reviews/create/` — create review (auth required)
 
-## 19. Appendix — Example Redis Key Naming
-- `tmdb:trending:week`
-- `tmdb:movie:{id}:detail`
-- `user:{user_id}:recommendations`
-- `movie:{tmdb_id}:views:daily`
-
----
-
-## 20. Notes & Pitfalls to avoid
-- Don’t expose TMDb API key to client
-- Normalize TMDb data to your schema (do not pass raw)
-- Cache aggressively but invalidate on content changes
-- Use database transactions for critical updates (reviews, ratings)
-- Mock external APIs during tests to avoid rate limits
+### Favorites
+- `GET /api/favorites/` — list user favorites (auth required)
+- `POST /api/favorites/add/` — add favorite by `tmdb_id`
+- `POST /api/favorites/remove/` — remove favorite by `tmdb_id`
 
 ---
 
-# End of Document — MoviVerse Backend Requirements (REST + Swagger)
+## Testing & CI
+
+- A basic GitHub Actions workflow is included at `.github/workflows/ci.yml`. It sets up Postgres service and runs tests.
+- Add more CI steps: linting (Black/flake8), security checks, DB migrations check, and integration tests that mock TMDb.
+
+---
+
+## Deployment (production)
+
+### Recommended stack
+- PostgreSQL (managed, e.g., RDS, ElephantSQL)
+- Redis (managed or hosted)
+- Gunicorn as WSGI server
+- Nginx as reverse proxy
+- Celery workers (and optionally Celery Beat) for background tasks
+- Optional: Docker or direct systemd services
+
+### Checklist for production
+1. `DJANGO_DEBUG=False`
+2. Secure `DJANGO_SECRET_KEY` stored in environment
+3. Configure `ALLOWED_HOSTS` properly
+4. Use HTTPS (Let’s Encrypt or vendor TLS)
+5. Set up staticfiles (collectstatic) behind a CDN or via whitenoise + nginx
+6. Configure process manager (systemd / supervisor / gunicorn + nginx)
+7. Monitor logs (Sentry or similar) and set alerts
+8. Rate-limit endpoints (DRF throttling) if public
+
+### Example Gunicorn systemd service
+```
+[Unit]
+Description=Gunicorn instance to serve moviebox
+After=network.target
+
+[Service]
+User=www-data
+Group=www-data
+WorkingDirectory=/path/to/moviebox
+ExecStart=/path/to/venv/bin/gunicorn moviebox.wsgi:application --bind 0.0.0.0:8000
+
+[Install]
+WantedBy=multi-user.target
+```
+
+---
+
+## Security & best practices
+
+- Never commit `.env` or secret keys.
+- Use HTTPS and HSTS headers.
+- Set `SECURE_BROWSER_XSS_FILTER`, `X_FRAME_OPTIONS`, and other common hardening settings.
+- Keep dependencies up-to-date and run `pip-audit` occasionally.
+- Use database role with least privilege for the app.
+
+---
+
+## Troubleshooting
+
+- `OperationalError: could not connect to server` — check Postgres host/port, and that DB is running.
+- `TMDb API 401` — check `TMDB_API_KEY` and that it’s correctly set in the environment.
+- `Celery cannot connect to broker` — ensure `REDIS_URL` is correct and Redis is running.
+- `AUTH_USER_MODEL` changed after migrations` — if you change `AUTH_USER_MODEL`, you must recreate DB or follow Django docs for migrations.
+
+---
+
+## Next steps & roadmap
+
+- Add more robust recommendation engine (collaborative filtering or matrix-factorization).
+- Add request throttling & API rate limits.
+- Add image proxying for TMDb posters, optionally resize images.
+- Add more thorough unit, integration and end-to-end tests (including mocking TMDb API).
+- Add Docker + docker-compose for local reproducible dev environment (not included here at user's request).
+
+---
+
+

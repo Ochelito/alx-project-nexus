@@ -1,0 +1,12 @@
+from django.db import models
+from django.conf import settings
+from movies.models import Movie
+
+class FavoriteItem(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="favorites")
+    movie = models.ForeignKey(Movie, on_delete=models.CASCADE)
+    tmdb_id = models.IntegerField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("user", "tmdb_id")

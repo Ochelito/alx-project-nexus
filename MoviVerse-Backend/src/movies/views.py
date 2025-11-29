@@ -1,113 +1,113 @@
-from rest_framework import viewsets, status, filters
-from rest_framework.decorators import action, api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework import generics, permissions
+from .models import Movie, Genre, TrendingMovie
+from .serializers import MovieSerializer, TrendingMovieSerializer, GenreSerializer
 from rest_framework.response import Response
-from django.shortcuts import get_object_or_404
-from django.db.models import Avg, Count
-from django.utils import timezone
-from datetime import timedelta
-
-from .models import Movie, Genre, Review, Favorite, Recommendation, Watchlist, MovieViewLog, TrendingMovie
-from .serializers import (
-    MovieSerializer, MovieCreateUpdateSerializer, GenreSerializer,
-    ReviewSerializer, FavoriteSerializer, RecommendationSerializer,
-    WatchlistSerializer, TrendingMovieSerializer
-)
-from .permissions import IsOwnerOrReadOnly
-from rest_framework.generics import CreateAPIView
-from .serializers import RegisterSerializer
-
-# ---------- User Registration ----------
-class RegisterView(CreateAPIView):
-    serializer_class = RegisterSerializer
-    permission_classes = [AllowAny]
-
-# ---------- Movie ViewSet ----------
-class MovieViewSet(viewsets.ModelViewSet):
-    queryset = Movie.objects.filter()
-    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
-    search_fields = ["title", "description"]
-    ordering_fields = ["release_year", "created_at"]
-
-    def get_serializer_class(self):
-        if self.action in ("create", "update", "partial_update"):
-            return MovieCreateUpdateSerializer
-        return MovieSerializer
-
-    def get_permissions(self):
-        if self.action in ("create", "update", "partial_update", "destroy"):
-            return [IsAuthenticated()]  # restrict to authenticated (admin/staff ideally)
-        return [AllowAny()]
-
-    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
-    def favorite(self, request, pk=None):
-        movie = self.get_object()
-        fav, created = Favorite.objects.get_or_create(user=request.user, movie=movie)
-        serializer = FavoriteSerializer(fav)
-        return Response(serializer.data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
-
-    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
-    def watch(self, request, pk=None):
-        movie = self.get_object()
-        # Log a view
-        MovieViewLog.objects.create(user=request.user, movie=movie)
-        # Optionally add to watchlist or mark watched - here just a log
-        return Response({"ok": True}, status=status.HTTP_201_CREATED)
-
-    @action(detail=False, methods=["get"], permission_classes=[AllowAny])
-    def trending(self, request):
-        # Simple: return top TrendingMovie entries
-        qs = TrendingMovie.objects.select_related("movie").order_by("-score")[:50]
-        serializer = TrendingMovieSerializer(qs, many=True)
-        return Response(serializer.data)
-
-    @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated])
-    def recommendations(self, request):
-        qs = Recommendation.objects.filter(user=request.user).select_related("movie").order_by("-created_at")
-        serializer = RecommendationSerializer(qs, many=True)
-        return Response(serializer.data)
+from rest_framework.decorators import api_view
+from tmdb.client import TMDbClient
+from django.core.cache import cache
+from rest_framework.views import APIView
+from core.utils import success, error
 
 
-# ---------- Genre ViewSet ----------
-class GenreViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = Genre.objects.all()
-    serializer_class = GenreSerializer
-    permission_classes = [AllowAny]
+tmdb = TMDbClient()
 
+class MovieListView(generics.ListAPIView):
+    queryset = Movie.objects.all()
+    serializer_class = MovieSerializer
 
-# ---------- Review ViewSet ----------
-class ReviewViewSet(viewsets.ModelViewSet):
-    queryset = Review.objects.select_related("user", "movie").all().order_by("-created_at")
-    serializer_class = ReviewSerializer
-    permission_classes = [IsOwnerOrReadOnly]
+class MovieDetailView(generics.RetrieveAPIView):
+    queryset = Movie.objects.all()
+    serializer_class = MovieSerializer
+    lookup_field = 'id'
 
-    def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
-
-
-# ---------- Favorite ViewSet (optional) ----------
-class FavoriteViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = Favorite.objects.select_related("user", "movie").all()
-    serializer_class = FavoriteSerializer
-    permission_classes = [IsAuthenticated]
-
-
-# ---------- Watchlist ViewSet ----------
-class WatchlistViewSet(viewsets.ModelViewSet):
-    serializer_class = WatchlistSerializer
-    permission_classes = [IsAuthenticated]
+class TrendingMoviesView(generics.ListAPIView):
+    serializer_class = TrendingMovieSerializer
+    permission_classes = [permissions.AllowAny]
 
     def get_queryset(self):
-        return Watchlist.objects.filter(user=self.request.user)
+        return TrendingMovie.objects.select_related('movie').all()
 
-    def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+    def get(self, request):
+        movies = tmdb.get_trending()
+        return Response(movies)
 
+    def get(self, request):
+        cached = cache.get("trending_movies")
+        if cached:
+            return success(cached)
 
-# ---------- Recommendation ViewSet ----------
-class RecommendationViewSet(viewsets.ReadOnlyModelViewSet):
-    serializer_class = RecommendationSerializer
-    permission_classes = [IsAuthenticated]
+        tmdb = TMDbClient()
+        movies = tmdb.get_trending_movies()
+
+        if movies is None:
+            return error("Failed to fetch trending movies", 500)
+
+        # Format for React frontend
+        formatted = [
+            {
+                "id": m["id"],
+                "title": m["title"],
+                "poster_url": f"https://image.tmdb.org/t/p/w500{m['poster_path']}" if m.get("poster_path") else None,
+                "rating": m.get("vote_average"),
+                "overview": m.get("overview"),
+                "release_date": m.get("release_date"),
+            }
+            for m in movies
+        ]
+
+        cache.set("trending_movies", formatted, 60 * 30)
+        return success(formatted)
+
+@api_view(["GET"])
+def tmdb_trending(request):
+    """
+    Return TMDb trending directly (cached)
+    """
+    cached = cache.get("tmdb_trending")
+    if cached:
+        return Response(cached)
+    client = TMDbClient()
+    resp = client.trending(page=request.query_params.get("page", 1))
+    cache.set("tmdb_trending", resp, timeout=60*10)  # cache 10min
+    return Response(resp)
+
+class SearchMoviesAPIView(ListAPIView):
+    serializer_class = MovieSerializer
+    pagination_class = PageNumberPagination
 
     def get_queryset(self):
-        return Recommendation.objects.filter(user=self.request.user).select_related("movie")
+        query = self.request.query_params.get("q", "")
+        return Movie.objects.filter(title__icontains=query)
+
+class SearchView(APIView):
+    def get(self, request):
+        query = request.GET.get("q", "")
+        if not query:
+            return Response({"results": []})
+        return Response(tmdb.search_movies(query))
+    
+class MovieDetail(generics.RetrieveAPIView):
+    lookup_field = "tmdb_id"
+    queryset = Movie.objects.all()
+    serializer_class = MovieSerializer
+    permission_classes = [permissions.AllowAny]
+
+@api_view(["GET"])
+def search(request):
+    q = request.query_params.get("q")
+    page = request.query_params.get("page", 1)
+    if not q:
+        return Response({"results": []})
+    client = TMDbClient()
+    resp = client.search_movie(q, page=page)
+    return Response(resp)
+
+@api_view(["GET"])
+def genres(request):
+    cached = cache.get("tmdb_genres")
+    if cached:
+        return Response(cached)
+    client = TMDbClient()
+    resp = client.genres()
+    cache.set("tmdb_genres", resp, timeout=24*3600)
+    return Response(resp)

@@ -19,7 +19,7 @@ from datetime import timedelta
 # Load environment variables
 load_dotenv()
 
-AUTH_USER_MODEL = "movies.User"
+AUTH_USER_MODEL = "users.User"
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
@@ -44,11 +44,15 @@ INSTALLED_APPS = [
   
      # Third party
     "rest_framework",
+    "rest_framework_simplejwt",
     "corsheaders",
     "drf_yasg",
 
     # Local apps
     "movies",
+    "users",
+    "reviews",
+    "favorites",
 ]
 
 MIDDLEWARE = [
@@ -71,6 +75,7 @@ TEMPLATES = [
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
+                'django.template.context_processors.debug',
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
@@ -80,7 +85,7 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'config.wsgi.application'
-
+ASGI_APPLICATION = "config.asgi.application"
 
 # Database with postgres configuration
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
@@ -100,6 +105,7 @@ CACHES = {
     "default": {
         "BACKEND": "django.core.cache.backends.redis.RedisCache",
         "LOCATION": os.getenv("REDIS_URL"),
+        "OPTIONS": {"CLIENT_CLASS": "django_redis.client.DefaultClient"},
     }
 }
 
@@ -109,9 +115,10 @@ REST_FRAMEWORK = {
         "rest_framework_simplejwt.authentication.JWTAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": (
-        "rest_framework.permissions.IsAuthenticatedOrReadOnly",
+        "rest_framework.permissions.IsAuthenticatedOrReadOnly", 'permissions.AllowAny',
     ),
-    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.CursorPagination",
+    "DEFAULT_PAGINATION_CLASS": ("rest_framework.pagination.CursorPagination", 
+    "rest_framework.pagination.PageNumberPagination"),
     "PAGE_SIZE": 20,
 }
 
@@ -121,10 +128,18 @@ SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=60),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=30),
     "SIGNING_KEY": os.getenv("SIMPLE_JWT_SECRET", SECRET_KEY),
+    "AUTH_HEADER_TYPES": ("Bearer",),
 }
 
 # CORS settings
-CORS_ALLOW_ALL_ORIGINS = True
+# Allow frontend connection
+CORS_ALLOW_ALL_ORIGINS = False
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:5173",   # Vite
+    "http://localhost:3000",   # React dev server
+]
+
+CORS_ALLOW_CREDENTIALS = True
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
@@ -171,6 +186,6 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
 
 # Celery config (app-level)
-CELERY_BROKER_URL = os.getenv("REDIS_URL")
-CELERY_RESULT_BACKEND = os.getenv("REDIS_URL")
+CELERY_BROKER_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+CELERY_RESULT_BACKEND = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 CELERY_BEAT_SCHEDULE = {}  # will be configured in core.celery or movies.tasks
