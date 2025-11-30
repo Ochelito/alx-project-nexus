@@ -33,6 +33,7 @@ class StandardResultsSetPagination(PageNumberPagination):
 # Trending Movies (TMDb-first, cached)
 # -----------------------------
 @swagger_auto_schema(
+    method="get",  # <- specify the HTTP method
     tags=["Movies"],
     operation_summary="Get trending movies from TMDb",
     responses={200: MovieSerializer(many=True)}
@@ -59,6 +60,7 @@ def trending_movies(request):
 # Search Movies (TMDb-first, cached)
 # -----------------------------
 @swagger_auto_schema(
+    method="get",
     tags=["Movies"],
     operation_summary="Search movies globally",
     manual_parameters=[
@@ -92,6 +94,7 @@ def search_movies(request):
 # Movie Detail (TMDb-first, DB-sync)
 # -----------------------------
 @swagger_auto_schema(
+    method="get",
     tags=["Movies"],
     operation_summary="Get movie details by TMDb ID",
     manual_parameters=[

@@ -1,5 +1,5 @@
 from .models import Movie, MovieViewLog, TrendingMovie
-from favorite.models import Favorite
+from favorites.models import Favorite
 from math import log
 from django.utils import timezone
 from datetime import timedelta

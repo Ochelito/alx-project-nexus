@@ -42,7 +42,6 @@ class Movie(models.Model):
         indexes = [
             models.Index(fields=["popularity"]),
             models.Index(fields=["vote_average"]),
-            models.Index(fields=["release_date"]),
             models.Index(fields=["tmdb_id"]),
         ]
     
