@@ -1,15 +1,6 @@
 from django.db import models
 from django.conf import settings
 from movies.models import Movie
-from rest_framework import serializers
-
-class MovieBasicSerializer(serializers.ModelSerializer):
-    """
-    Simple serializer for movie details nested in favorites.
-    """
-    class Meta:
-        model = Movie
-        fields = ["tmdb_id", "title", "poster_path", "vote_average"]
 
 class Favorite(models.Model):
     user = models.ForeignKey(

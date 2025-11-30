@@ -17,3 +17,4 @@ app.autodiscover_tasks()
 @app.task(bind=True)
 def debug_task(self):
     print(f"Celery Debug Task: {self.request!r}")
+    

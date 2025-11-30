@@ -12,7 +12,7 @@ def generate_recommendations_for_user_task(user_id, limit=20):
     except User.DoesNotExist:
         return f"User {user_id} does not exist."
     
-    compute_recommendations_for_user(user, limit)
+    compute_recommendations_for_user(user, limit=limit)
     return f"Recommendations generated for {user.email}"
 
 
