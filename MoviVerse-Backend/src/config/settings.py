@@ -30,11 +30,6 @@ SECRET_KEY = os.getenv('DJANGO_SECRET_KEY',)
 if not SECRET_KEY:
     raise RuntimeError("DJANGO_SECRET_KEY is missing")
 
-SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")  # if behind proxy
-SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "True").lower() in ("1", "true", "yes")
-CSRF_COOKIE_SECURE = os.getenv("CSRF_COOKIE_SECURE", "True").lower() in ("1", "true", "yes")
-SECURE_SSL_REDIRECT = os.getenv("SECURE_SSL_REDIRECT", "False").lower() in ("1", "true", "yes")
-
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'False').lower() in ("1", 'true', "yes")
 
@@ -64,6 +59,8 @@ INSTALLED_APPS = [
     "drf_yasg",
     "django_extensions",
     "django_filters",
+    "django_celery_beat",
+    "django_celery_results",
 
     # Local apps
     "movies",
@@ -101,6 +98,20 @@ TEMPLATES = [
     },
 ]
 
+# ---------- SESSIONS ----------
+# Use cache backing for sessions to reduce DB load
+SESSION_ENGINE = "django.contrib.sessions.backends.cache"
+SESSION_CACHE_ALIAS = "default"
+SESSION_COOKIE_HTTPONLY = True
+
+# Optional: set session expiry in seconds (e.g., 2 weeks)
+SESSION_COOKIE_AGE = int(os.getenv("SESSION_COOKIE_AGE", 60 * 60 * 24 * 14))
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")  # if behind proxy
+SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "True").lower() in ("1", "true", "yes")
+CSRF_COOKIE_SECURE = os.getenv("CSRF_COOKIE_SECURE", "True").lower() in ("1", "true", "yes")
+SECURE_SSL_REDIRECT = os.getenv("SECURE_SSL_REDIRECT", "False").lower() in ("1", "true", "yes")
+
+
 WSGI_APPLICATION = 'config.wsgi.application'
 ASGI_APPLICATION = "config.asgi.application"
 
@@ -126,6 +137,7 @@ CACHES = {
         "BACKEND": "django_redis.cache.RedisCache",
         "LOCATION": REDIS_URL,
         "OPTIONS": {"CLIENT_CLASS": "django_redis.client.DefaultClient"},
+        "KEY_PREFIX": "moviverse"
     }
 }
 
@@ -223,7 +235,20 @@ CELERY_BEAT_SCHEDULE = {
         "task": "users.recommendations.tasks.generate_recommendations_for_all_users",
         "schedule": 3600 * 12,  # every 12 hours
     },
-} # will be configured in core.celery or movies.tasks
+}
+
+# Optional Celery settings
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+CELERY_TIMEZONE = os.getenv("TIME_ZONE", "Africa/Lagos")
+CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
+
+# Configure django-celery-results
+CELERY_RESULT_BACKEND = CELERY_RESULT_BACKEND
+DJANGO_CELERY_RESULTS = {
+    "CACHE_REDIS_URL": REDIS_URL
+}
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
