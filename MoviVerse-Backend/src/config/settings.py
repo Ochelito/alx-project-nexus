@@ -40,7 +40,10 @@ ALLOWED_HOSTS = [
 ]
 
 CORS_ALLOW_ALL_ORIGINS = os.getenv("CORS_ALLOW_ALL_ORIGINS", "False").lower() in ("1", "true", "yes")
-
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",  # React dev server
+    # Add your production domain later
+]
 
 # Application definition
 
