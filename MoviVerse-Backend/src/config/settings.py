@@ -35,7 +35,7 @@ DEBUG = os.getenv('DEBUG', 'False').lower() in ("1", 'true', "yes")
 
 ALLOWED_HOSTS = [
     h.strip()
-    for h in os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+    for h in os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1", "alx-project-nexus-4-nmxr.onrender.com").split(",")
     if h.strip()
 ]
 
