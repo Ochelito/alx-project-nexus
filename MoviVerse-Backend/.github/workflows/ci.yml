@@ -1,41 +1,96 @@
-name: Django CI
-
-on: [push, pull_request]
+name: Django CI with Celery
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
 
 jobs:
   test:
     runs-on: ubuntu-latest
+
+    env:
+      # Django & project environment
+      DJANGO_SECRET_KEY: change-me-to-a-very-secret-value
+      DEBUG: True
+      ALLOWED_HOSTS: localhost,127.0.0.1
+      CORS_ALLOW_ALL_ORIGINS: False
+      CORS_ALLOWED_ORIGINS: http://localhost:5173,http://localhost:3000
+      TMDB_API_KEY: your_tmdb_api_key_here
+      SIMPLE_JWT_SECRET: another-secret-for-jwt
+      SIMPLE_JWT_ACCESS_TOKEN_LIFETIME_MINUTES: 60
+      REDIS_URL: redis://localhost:6379/1
+      SUPABASE_URL: https://zkcyziciigtqzdumcluo.supabase.co
+      SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InprY3l6aWNpaWd0cXpkdW1jbHVvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQxNjY3OTAsImV4cCI6MjA3OTc0Mjc5MH0.9NJc-OShVtPUS_bUgzCGURR_k28E-9salKoMw37Z_j8
+      LOG_LEVEL: INFO
+      DATABASE_URL: postgresql://postgres.zkcyziciigtqzdumcluo:MoviVerseBackend1@aws-1-eu-west-2.pooler.supabase.com:5432/postgres?sslmode=require
+      CELERY_TASK_ALWAYS_EAGER: True  # Run Celery tasks synchronously in CI
+
     services:
-      postgres:
-        image: postgres:14
-        env:
-          POSTGRES_DB: moviebox
-          POSTGRES_USER: moviebox_user
-          POSTGRES_PASSWORD: postgres
+      redis:
+        image: redis:7
         ports:
-          - 5432:5432
+          - 6379:6379
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "redis-cli ping"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+
     steps:
+      # Checkout code
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v4
+
+      # Setup Python
+      - name: Set up Python
+        uses: actions/setup-python@v4
         with:
-          python-version: "3.10"
+          python-version: 3.10
+
+      # Install dependencies
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-      - name: Run migrations
-        env:
-          POSTGRES_DB: moviebox
-          POSTGRES_USER: moviebox_user
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_HOST: 127.0.0.1
+
+      # Validate required environment variables
+      - name: Validate environment variables
         run: |
-          python manage.py migrate --noinput
-      - name: Run tests
+          required_envs=("DJANGO_SECRET_KEY" "TMDB_API_KEY" "SIMPLE_JWT_SECRET" "REDIS_URL" "DATABASE_URL")
+          for var in "${required_envs[@]}"; do
+            if [ -z "${!var}" ]; then
+              echo "ERROR: Environment variable $var is not set."
+              exit 1
+            fi
+          done
+          echo "All required environment variables are set."
+
+      # Validate TMDb API key
+      - name: Validate TMDb API Key
         run: |
-          python manage.py test --verbosity=2
+          python - <<EOF
+          import os, requests
+          key = os.environ.get("TMDB_API_KEY")
+          resp = requests.get(f"https://api.themoviedb.org/3/configuration?api_key={key}")
+          if resp.status_code != 200:
+              raise Exception(f"TMDb API key invalid or unreachable. Status code: {resp.status_code}")
+          print("TMDb API key is valid.")
+          EOF
+
+      # Run Django Migrations
+      - name: Run Django Migrations
+        run: python manage.py migrate --noinput
+
+      # Run Django Tests with Coverage
+      - name: Run Django Tests with Coverage
+        run: |
+          pip install coverage
+          coverage run --source='.' manage.py test --verbosity=2
+          coverage report -m
+          coverage xml -o coverage.xml
+
+      # Run Celery Task Tests (synchronously)
+      - name: Run Celery Tasks Tests
+        run: |
+          export CELERY_TASK_ALWAYS_EAGER=True
+          python manage.py test users favorites reviews --verbosity=2

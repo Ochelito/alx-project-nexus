@@ -121,4 +121,9 @@ wcwidth==0.2.14
 websockets==15.0.1
 whitenoise==6.11.0
 yarl==1.22.0
-
+django-extensions>=3.2.3
+django-redis>=5.2.0
+redis>=4.5.0
+celery[redis]>=5.3.0
+django-celery-beat>=2.4.0
+django-celery-results>=2.5.0
