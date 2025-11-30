@@ -1,77 +1,118 @@
 from rest_framework import generics, permissions, status
-from .models import FavoriteItem, Favorite
-from .serializers import FavoriteItemSerializer
 from rest_framework.response import Response
-from movies.models import Movie
-from rest_framework.decorators import api_view, permission_classes
 from rest_framework.views import APIView
+from rest_framework.decorators import api_view, permission_classes
+from movies.models import Movie
+from .models import Favorite
+from .serializers import FavoriteSerializer
+from drf_yasg.utils import swagger_auto_schema
+from drf_yasg import openapi
 
-class FavoritesList(generics.ListAPIView):
-    serializer_class = FavoriteItemSerializer
+# -----------------------------
+# List Favorites
+# -----------------------------
+class FavoriteListView(generics.ListAPIView):
+    """
+    Lists all favorite movies for the authenticated user.
+    """
+    serializer_class = FavoriteSerializer
     permission_classes = [permissions.IsAuthenticated]
 
+    @swagger_auto_schema(
+        operation_summary="List all favorite movies for the authenticated user",
+        responses={200: FavoriteSerializer(many=True)}
+    )
+
     def get_queryset(self):
-        return FavoriteItem.objects.filter(user=self.request.user).select_related("movie")
+        return Favorite.objects.filter(user=self.request.user).select_related("movie")
 
-    def get(self, request):
-        favs = Favorite.objects.filter(user=request.user)
-        return Response([f.tmdb_id for f in favs])
 
+# -----------------------------
+# Add Favorite
+# -----------------------------
 class AddFavoriteAPIView(APIView):
-    def post(self, request):
-        user = request.user
-        movie_id = request.data.get("movie_id")
+    permission_classes = [permissions.IsAuthenticated]
 
-        if not movie_id:
-            return error("movie_id is required")
-
-        Favorite.objects.get_or_create(user=user, movie_id=movie_id)
-        return success({"message": "Added to favorites"})
-
-
-class RemoveFavoriteAPIView(APIView):
-    def post(self, request):
-        user = request.user
-        movie_id = request.data.get("movie_id")
-
-        Favorite.objects.filter(user=user, movie_id=movie_id).delete()
-        return success({"message": "Removed from favorites"})
-
-
-class ListFavoritesAPIView(APIView):
-    def get(self, request):
-        favorites = Favorite.objects.filter(user=request.user)
-
-        formatted = [
-            {
-                "movie_id": f.movie_id,
-                "title": f.title,
-                "poster_url": f.poster_url,
+    @swagger_auto_schema(
+        operation_summary="Add a movie to user's favorites",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            required=["tmdb_id"],
+            properties={
+                "tmdb_id": openapi.Schema(type=openapi.TYPE_INTEGER, description="TMDb ID of the movie"),
+                "title": openapi.Schema(type=openapi.TYPE_STRING, description="Optional movie title if new")
             }
-            for f in favorites
-        ]
+        ),
+        responses={200: openapi.Response(description="Movie added to favorites")}
+    )
 
-        return success(formatted)
+    def post(self, request):
+        tmdb_id = request.data.get("tmdb_id")
+        if not tmdb_id:
+            return Response({"detail": "tmdb_id is required"}, status=status.HTTP_400_BAD_REQUEST)
 
-@api_view(["POST"])
+        movie, _ = Movie.objects.get_or_create(tmdb_id=tmdb_id, defaults={"title": request.data.get("title", "")})
+        favorite, created = Favorite.objects.get_or_create(user=request.user, movie=movie)
+
+        return Response({
+            "created": created,
+            "movie_id": movie.tmdb_id,
+            "title": movie.title
+        })
+
+
+# -----------------------------
+# Remove Favorite
+# -----------------------------
+class RemoveFavoriteAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_summary="Remove a movie from user's favorites",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            required=["tmdb_id"],
+            properties={
+                "tmdb_id": openapi.Schema(type=openapi.TYPE_INTEGER, description="TMDb ID of the movie")
+            }
+        ),
+        responses={200: openapi.Response(description="Movie removed from favorites")}
+    )
+
+    def post(self, request):
+        tmdb_id = request.data.get("tmdb_id")
+        if not tmdb_id:
+            return Response({"detail": "tmdb_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            movie = Movie.objects.get(tmdb_id=tmdb_id)
+        except Movie.DoesNotExist:
+            return Response({"detail": "Movie not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        deleted, _ = Favorite.objects.filter(user=request.user, movie=movie).delete()
+        return Response({"removed": bool(deleted)})
+
+
+# -----------------------------
+# Optional function-based endpoints
+# -----------------------------
+@swagger_auto_schema(
+    method="get",
+    operation_summary="Get formatted favorites list for user",
+    responses={200: openapi.Response(description="List of favorite movies")}
+)
+@api_view(["GET"])
 @permission_classes([permissions.IsAuthenticated])
-def add_favorite(request):
-    tmdb_id = request.data.get("tmdb_id")
-    if not tmdb_id:
-        return Response({"detail": "tmdb_id required"}, status=status.HTTP_400_BAD_REQUEST)
-    movie, _ = Movie.objects.get_or_create(tmdb_id=tmdb_id, defaults={"title": request.data.get("title", "")})
-    fav, created = FavoriteItem.objects.get_or_create(user=request.user, movie=movie)
-    return Response({"created": created})
-
-@api_view(["POST"])
-@permission_classes([permissions.IsAuthenticated])
-def remove_favorite(request):
-    tmdb_id = request.data.get("tmdb_id")
-    if not tmdb_id:
-        return Response({"detail": "tmdb_id required"}, status=status.HTTP_400_BAD_REQUEST)
-    try:
-        movie = Movie.objects.get(tmdb_id=tmdb_id)
-    except Movie.DoesNotExist:
-        return Response({"detail": "movie not found"}, status=status.HTTP_404_NOT_FOUND)
-    FavoriteItem.objects.filter(user=request.user, movie=movie).delete()
-    return Response({"removed": True})
+def list_favorites(request):
+    """
+    Returns a formatted list of favorites for the user.
+    """
+    favorites = Favorite.objects.filter(user=request.user).select_related("movie")
+    response = [
+        {
+            "movie_id": f.movie.tmdb_id,
+            "title": f.movie.title,
+            "poster_url": f"https://image.tmdb.org/t/p/w500{f.movie.poster_path}" if f.movie.poster_path else None,
+        }
+        for f in favorites
+    ]
+    return Response(response)

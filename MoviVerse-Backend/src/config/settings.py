@@ -16,21 +16,36 @@ from dotenv import load_dotenv
 import dj_database_url
 from datetime import timedelta
 
-# Load environment variables
-load_dotenv()
+# BASE_DIR: project root (manage.py parent)
+BASE_DIR = Path(__file__).resolve().parent.parent
 
-AUTH_USER_MODEL = "users.User"
+# Load environment variables
+load_dotenv(BASE_DIR / '.env')
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'fallback-secret-key')
+SECRET_KEY = os.getenv('DJANGO_SECRET_KEY',)
+if not SECRET_KEY:
+    raise RuntimeError("DJANGO_SECRET_KEY is missing")
+
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")  # if behind proxy
+SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "True").lower() in ("1", "true", "yes")
+CSRF_COOKIE_SECURE = os.getenv("CSRF_COOKIE_SECURE", "True").lower() in ("1", "true", "yes")
+SECURE_SSL_REDIRECT = os.getenv("SECURE_SSL_REDIRECT", "False").lower() in ("1", "true", "yes")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.getenv('DEBUG', 'True') == 'True'
+DEBUG = os.getenv('DEBUG', 'False').lower() in ("1", 'true', "yes")
 
-ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '*').split(',')
+ALLOWED_HOSTS = [
+    h.strip()
+    for h in os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+    if h.strip()
+]
+
+CORS_ALLOW_ALL_ORIGINS = os.getenv("CORS_ALLOW_ALL_ORIGINS", "False").lower() in ("1", "true", "yes")
+
 
 # Application definition
 
@@ -47,6 +62,8 @@ INSTALLED_APPS = [
     "rest_framework_simplejwt",
     "corsheaders",
     "drf_yasg",
+    "django_extensions",
+    "django_filters",
 
     # Local apps
     "movies",
@@ -71,7 +88,7 @@ ROOT_URLCONF = 'config.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [BASE_DIR / 'templates'],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -90,7 +107,9 @@ ASGI_APPLICATION = "config.asgi.application"
 # Database with postgres configuration
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
-DATABASE_URL = os.getenv("DB_CONNECTION") or ""
+DATABASE_URL = os.getenv("DB_CONNECTION") or os.getenv("DB_CONNECTION")
+if not DATABASE_URL:
+    raise RuntimeError("DB_CONNECTION environment variable is required")
 
 DATABASES = {
     "default": dj_database_url.parse(
@@ -101,13 +120,16 @@ DATABASES = {
 }
 
 # Redis Caching
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/1")
 CACHES = {
     "default": {
-        "BACKEND": "django.core.cache.backends.redis.RedisCache",
-        "LOCATION": os.getenv("REDIS_URL"),
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": REDIS_URL,
         "OPTIONS": {"CLIENT_CLASS": "django_redis.client.DefaultClient"},
     }
 }
+
+AUTH_USER_MODEL = "users.User"
 
 # REST Framework + JWT
 REST_FRAMEWORK = {
@@ -115,31 +137,38 @@ REST_FRAMEWORK = {
         "rest_framework_simplejwt.authentication.JWTAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": (
-        "rest_framework.permissions.IsAuthenticatedOrReadOnly", 'permissions.AllowAny',
+        "rest_framework.permissions.IsAuthenticatedOrReadOnly",
     ),
-    "DEFAULT_PAGINATION_CLASS": ("rest_framework.pagination.CursorPagination", 
-    "rest_framework.pagination.PageNumberPagination"),
-    "PAGE_SIZE": 20,
+    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+    "PAGE_SIZE": int(os.getenv("PAGE_SIZE", 20)),
+    "DEFAULT_FILTER_BACKENDS": [
+        "django_filters.rest_framework.DjangoFilterBackend",
+        "rest_framework.filters.SearchFilter",
+        "rest_framework.filters.OrderingFilter",
+    ],
 }
 
 from rest_framework_simplejwt.settings import api_settings as jwt_settings
 
+# Simple JWT configuration
+SIMPLE_JWT_SIGNING_KEY = os.getenv("SIMPLE_JWT_SECRET")
+if not SIMPLE_JWT_SIGNING_KEY:
+    # fall back explicitly to DJANGO secret only if allowed (but warn)
+    if DEBUG:
+        SIMPLE_JWT_SIGNING_KEY = SECRET_KEY
+    else:
+        raise RuntimeError("SIMPLE_JWT_SECRET is required in production")
+
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=60),
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=30),
-    "SIGNING_KEY": os.getenv("SIMPLE_JWT_SECRET", SECRET_KEY),
-    "AUTH_HEADER_TYPES": ("Bearer",),
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=int(os.getenv("ACCESS_TOKEN_MINUTES", 60))),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=int(os.getenv("REFRESH_TOKEN_DAYS", 30))),
+    "SIGNING_KEY": SIMPLE_JWT_SIGNING_KEY,
+    "ALGORITHM": os.getenv("SIMPLE_JWT_ALGORITHM", "HS256"),
+    "AUTH_HEADER_TYPES": tuple(x.strip() for x in os.getenv("SIMPLE_JWT_AUTH_HEADER_TYPES", "Bearer").split(",")),
+    "USER_ID_FIELD": "id",
+    "USER_ID_CLAIM": "user_id",
 }
 
-# CORS settings
-# Allow frontend connection
-CORS_ALLOW_ALL_ORIGINS = False
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",   # Vite
-    "http://localhost:3000",   # React dev server
-]
-
-CORS_ALLOW_CREDENTIALS = True
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
@@ -160,32 +189,71 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 
-# Internationalization
-# https://docs.djangoproject.com/en/5.2/topics/i18n/
-
-LANGUAGE_CODE = 'en-us'
-
-TIME_ZONE = 'UTC'
-
+# ---------------------------
+# Internationalization & Timezone
+# ---------------------------
+LANGUAGE_CODE = "en-us"
+TIME_ZONE = os.getenv("TIME_ZONE", "Africa/Lagos")
 USE_I18N = True
-
 USE_TZ = True
 
+# ---------------------------
+# Static & Media
+# ---------------------------
+STATIC_URL = "/static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
 
-# Static files (CSS, JavaScript, Images)
-# https://docs.djangoproject.com/en/5.2/howto/static-files/
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "media"
 
-STATIC_URL = '/static/'
-
-# Default primary key field type
-# https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
-
-DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # TMDB Configuration
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
 
 # Celery config (app-level)
-CELERY_BROKER_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-CELERY_RESULT_BACKEND = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-CELERY_BEAT_SCHEDULE = {}  # will be configured in core.celery or movies.tasks
+CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", REDIS_URL)
+CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", REDIS_URL)
+CELERY_BEAT_SCHEDULE = {
+    "generate-weekly-trending": {
+        "task": "movies.tasks.generate_trending",
+        "schedule": 3600 * 6,  # every 6 hours
+    },
+    "generate-user-recommendations": {
+        "task": "users.recommendations.tasks.generate_recommendations_for_all_users",
+        "schedule": 3600 * 12,  # every 12 hours
+    },
+} # will be configured in core.celery or movies.tasks
+
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "standard": {"format": "%(levelname)s %(asctime)s [%(name)s] %(message)s"},
+    },
+    "handlers": {
+        "console": {"class": "logging.StreamHandler", "formatter": "standard"},
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": LOG_LEVEL,
+    },
+    "loggers": {
+        "django": {"handlers": ["console"], "level": LOG_LEVEL, "propagate": False},
+        "movies": {"handlers": ["console"], "level": LOG_LEVEL, "propagate": False},
+        "users": {"handlers": ["console"], "level": LOG_LEVEL, "propagate": False},
+    },
+}
+
+# initialize Sentry in wsgi/asgi startup module
+SENTRY_DSN = os.getenv("SENTRY_DSN", None)
+
+# ---------------------------
+# Final sanity checks & debug aids
+# ---------------------------
+if DEBUG:
+    # In development it's helpful to allow all origins if explicitly set
+    if os.getenv("DEV_ALLOW_ALL_ORIGINS", "False").lower() in ("1", "true", "yes"):
+        CORS_ALLOW_ALL_ORIGINS = True

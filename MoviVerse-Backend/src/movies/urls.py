@@ -1,10 +1,23 @@
 from django.urls import path
-from .views import TrendingList, tmdb_trending, MovieDetail, search, genres
+from . import views
 
 urlpatterns = [
-    path("trending_cached/", TrendingList.as_view(), name="trending_cached"),
-    path("trending/", tmdb_trending, name="trending"),
-    path("search/", search, name="search"),
-    path("genres/", genres, name="genres"),
-    path("<int:tmdb_id>/", MovieDetail.as_view(), name="movie_detail"),
+    # -----------------------------
+    # TMDb-based endpoints
+    # -----------------------------
+    path('movies/trending/', views.trending_movies, name='trending-movies'),
+    path('movies/search/', views.search_movies, name='search-movies'),
+    path('movies/<int:tmdb_id>/', views.movie_detail, name='movie-detail'),
+    path('genres/', views.tmdb_genres, name='tmdb-genres'),
+
+    # -----------------------------
+    # Watchlist endpoints
+    # -----------------------------
+    path('watchlist/', views.WatchlistListView.as_view(), name='watchlist-list'),
+    path('watchlist/add/', views.WatchlistCreateView.as_view(), name='watchlist-add'),
+
+    # -----------------------------
+    # Movie stats
+    # -----------------------------
+    path('movies/stats/', views.MovieStatsListView.as_view(), name='movie-stats-list'),
 ]

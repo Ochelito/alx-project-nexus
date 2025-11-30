@@ -24,20 +24,26 @@ from rest_framework import permissions
 
 schema_view = get_schema_view(
     openapi.Info(
-        title="MoviVerse API",
-        default_version="v1",
-        description="API for MoviVerse movie app",
+        title="Movie App API",
+        default_version='v1',
+        description="Backend API for Movie App (Movies, Users, Favorites, Reviews)",
+        terms_of_service="https://www.google.com/policies/terms/",
+        contact=openapi.Contact(email="support@yourdomain.com"),
+        license=openapi.License(name="MIT License"),
     ),
     public=True,
     permission_classes=(permissions.AllowAny,),
 )
+
 urlpatterns = [
-    path("admin/", admin.site.urls),
-    path("api/users/register/", include("users.urls")),
-    path("api/users/login/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
-    path("api/users/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
-    path("api/movies/", include("movies.urls")),
-    path("api/favorites/", include("favorites.urls")),
-    path("api/reviews/", include("reviews.urls")),
-    path("api/docs/", schema_view.with_ui("swagger", cache_timeout=0), name="schema-swagger-ui"),
+    path('admin/', admin.site.urls),
+    path('api/users/', include('users.urls')),
+    path('api/favorites/', include('favorites.urls')),
+    path('api/reviews/', include('reviews.urls')),
+    path('api/movies/', include('movies.urls')),
+
+    # Swagger/OpenAPI URLs
+    path('swagger.json/', schema_view.without_ui(cache_timeout=0), name='schema-json'),
+    path('swagger/', schema_view.with_ui('swagger', cache_timeout=0), name='schema-swagger-ui'),
+    path('redoc/', schema_view.with_ui('redoc', cache_timeout=0), name='schema-redoc'),
 ]
