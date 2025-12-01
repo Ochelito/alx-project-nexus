@@ -5,9 +5,9 @@ urlpatterns = [
     # -----------------------------
     # TMDb-based endpoints
     # -----------------------------
-    path('movies/trending/', views.trending_movies, name='trending-movies'),
-    path('movies/search/', views.search_movies, name='search-movies'),
-    path('movies/<int:tmdb_id>/', views.movie_detail, name='movie-detail'),
+    path('trending/', views.trending_movies, name='trending-movies'),
+    path('search/', views.search_movies, name='search-movies'),
+    path('<int:tmdb_id>/', views.movie_detail, name='movie-detail'),
     path('genres/', views.tmdb_genres, name='tmdb-genres'),
 
     # -----------------------------
@@ -19,5 +19,5 @@ urlpatterns = [
     # -----------------------------
     # Movie stats
     # -----------------------------
-    path('movies/stats/', views.MovieStatsListView.as_view(), name='movie-stats-list'),
+    path('stats/', views.MovieStatsListView.as_view(), name='movie-stats-list'),
 ]
